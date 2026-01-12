@@ -1,33 +1,33 @@
+import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
-import React from 'react';
 
-import { HapticTab } from '@/components/haptic-tab';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
-
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
-
+export default function TabsLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
-        headerShown: false,
-        tabBarButton: HapticTab,
-      }}>
+        headerTitleAlign: 'center',
+        headerStyle: { backgroundColor: '#fff' },
+        headerShadowVisible: false,
+        headerTitleStyle: { fontSize: 16, fontWeight: '900' },
+        tabBarActiveTintColor: '#000',
+        tabBarInactiveTintColor: '#888',
+        tabBarStyle: { height: 60, paddingBottom: 5, display: 'none' },
+      }}
+    >
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Home',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+          headerTitle: 'NANOTRACK',
+          title: 'Dashboard',
+          tabBarIcon: ({ color }) => <Ionicons name="home" size={24} color={color} />,
         }}
       />
       <Tabs.Screen
-        name="explore"
+        name="analytics"
         options={{
-          title: 'Explore',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
+          headerTitle: 'ANALYTICS',
+          title: 'Analytics',
+          tabBarIcon: ({ color }) => <Ionicons name="pie-chart" size={24} color={color} />,
         }}
       />
     </Tabs>
