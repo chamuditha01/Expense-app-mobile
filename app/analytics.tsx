@@ -2,13 +2,13 @@ import { supabase } from '@/components/lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Dimensions,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Dimensions,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
 
 const { width } = Dimensions.get('window');
@@ -57,7 +57,7 @@ useEffect(() => {
       else if (filter === '1Y') startDate.setFullYear(startDate.getFullYear() - 1);
 
       const { data: dbData, error } = await supabase
-        .from('expenses')
+        .from('expenses_duplicate')
         .select('amount, date_time')
         .eq('account_id', accountId)
         .gte('date_time', startDate.toISOString());
@@ -134,15 +134,22 @@ useEffect(() => {
       </View>
 
       {/* 2. Borderless Chart */}
-      [Image of a minimalist bar chart with thin black columns and no bounding box]
-      <View style={styles.chartArea}>
-        {data.map((item, i) => (
-          <View key={i} style={styles.cleanColumn}>
-            <View style={[styles.minimalBar, { height: `${Math.max(item.height, 2)}%` }]} />
-            <Text style={styles.cleanLabel}>{item.label}</Text>
-          </View>
-        ))}
-      </View>
+<View style={styles.chartArea}>
+  {data.map((item, i) => (
+    <View key={i} style={styles.cleanColumn}>
+      {/* Display amount only if it's greater than 0 */}
+      {item.amount > 0 && (
+        <Text style={styles.barValue}>
+          {item.amount >= 1000 
+            ? `${(item.amount / 1000).toFixed(1)}k` 
+            : Math.round(item.amount)}
+        </Text>
+      )}
+      <View style={[styles.minimalBar, { height: `${Math.max(item.height, 2)}%` }]} />
+      <Text style={styles.cleanLabel}>{item.label}</Text>
+    </View>
+  ))}
+</View>
 
       {/* 3. Magazine-style Data Breakdown */}
       <View style={styles.statsRow}>
@@ -167,6 +174,21 @@ const styles = StyleSheet.create({
     flex: 1, 
     backgroundColor: '#FFFFFF', 
     paddingTop: 75
+  },
+  barValue: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#000000',
+    marginBottom: 8, // Space between number and bar
+    textAlign: 'center',
+  },
+  chartArea: { 
+    height: 280, // Slightly increased height to accommodate labels
+    flexDirection: 'row', 
+    alignItems: 'flex-end', 
+    justifyContent: 'space-between',
+    paddingHorizontal: 20, // Adjusted padding for better label clearance
+    marginVertical: 40,
   },
   centered: { 
     flex: 1, 
@@ -215,14 +237,7 @@ const styles = StyleSheet.create({
     width: 20,
     backgroundColor: '#000'
   },
-  chartArea: { 
-    height: 260, 
-    flexDirection: 'row', 
-    alignItems: 'flex-end', 
-    justifyContent: 'space-between',
-    paddingHorizontal: 30,
-    marginVertical: 50,
-  },
+  
   cleanColumn: { 
     alignItems: 'center', 
     flex: 1 

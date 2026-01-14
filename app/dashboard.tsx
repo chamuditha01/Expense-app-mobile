@@ -130,7 +130,7 @@ useEffect(() => {
     async function fetchTodayTotal(accountId: string) {
         const today = new Date().toISOString().split('T')[0];
         const { data, error } = await supabase
-            .from('expenses')
+            .from('expenses_duplicate')
             .select('amount')
             .eq('account_id', accountId)
             .gte('date_time', `${today}T00:00:00`)
