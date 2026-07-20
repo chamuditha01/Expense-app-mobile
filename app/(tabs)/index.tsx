@@ -1,6 +1,8 @@
 import { supabase } from '@/components/lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage'; // 1. Import AsyncStorage
+import * as Linking from 'expo-linking';
 import { useRouter } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -14,6 +16,8 @@ import {
   View
 } from 'react-native';
 
+WebBrowser.maybeCompleteAuthSession();
+
 export default function AuthScreen() {
   const router = useRouter();
   const [email, setEmail] = useState('');
@@ -22,19 +26,22 @@ export default function AuthScreen() {
   const [isSignUp, setIsSignUp] = useState(false);
 
   useEffect(() => {
-    const clearSession = async () => {
+    const checkExistingSession = async () => {
       try {
-        await AsyncStorage.removeItem('user_id');
-        await AsyncStorage.removeItem('active_account_id');
-        // Optional: Sign out from Supabase as well
-        await supabase.auth.signOut();
-        console.log('✅ Local session cleared');
+        const { data: { session } } = await supabase.auth.getSession();
+
+        if (session?.user) {
+          // Already logged in from a previous app launch — skip the auth
+          // screen entirely and go straight to the dashboard.
+          await saveUserIdLocally(session.user.id);
+          router.replace('/dashboard');
+        }
       } catch (e) {
-        console.error('❌ Error clearing session', e);
+        console.error('❌ Error checking existing session', e);
       }
     };
 
-    clearSession();
+    checkExistingSession();
   }, []);
 
   // Helper to save user_id locally
@@ -99,7 +106,7 @@ export default function AuthScreen() {
           await saveUserIdLocally(signInData.user.id);
         }
 
-        router.replace('/dashboard'); 
+        router.replace('/dashboard');
       }
     } catch (error: any) {
       console.error("Auth Task Error:", error);
@@ -109,9 +116,82 @@ export default function AuthScreen() {
     }
   }
 
+  async function handleGoogleSignIn() {
+    setLoading(true);
+    try {
+      const redirectTo = Linking.createURL('auth/callback');
+
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo,
+          skipBrowserRedirect: true, // we open the browser ourselves below
+        },
+      });
+      if (error) throw error;
+      if (!data?.url) throw new Error('No auth URL returned from Supabase');
+
+      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+
+      if (result.type !== 'success' || !result.url) {
+        // user cancelled or dismissed the browser sheet
+        return;
+      }
+
+      // Supabase puts the session tokens in the URL fragment (#access_token=...)
+      const parsedUrl = new URL(result.url.replace('#', '?'));
+      const access_token = parsedUrl.searchParams.get('access_token');
+      const refresh_token = parsedUrl.searchParams.get('refresh_token');
+
+      if (!access_token || !refresh_token) {
+        throw new Error('Missing tokens in redirect URL');
+      }
+
+      const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
+        access_token,
+        refresh_token,
+      });
+      if (sessionError) throw sessionError;
+
+      // Same local-session bookkeeping as email/password sign-in
+      if (sessionData.user) {
+        const userId = sessionData.user.id;
+        await saveUserIdLocally(userId);
+
+        // If this is the user's first time signing in with Google,
+        // make sure a profile + default accounts exist for them too.
+        const { data: existingProfile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('id', userId)
+          .maybeSingle();
+
+        if (!existingProfile) {
+          await supabase
+            .from('profiles')
+            .insert([{ id: userId, email: sessionData.user.email }]);
+
+          await supabase
+            .from('accounts')
+            .insert([
+              { profile_id: userId, name: 'Personal', type: 'personal' },
+              { profile_id: userId, name: 'Business 1', type: 'business' }
+            ]);
+        }
+      }
+
+      router.replace('/dashboard');
+    } catch (error: any) {
+      console.error("Google Sign-In Error:", error);
+      Alert.alert('Google Sign-In Error', error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
-    <KeyboardAvoidingView 
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
     >
       <View style={styles.innerContainer}>
@@ -119,7 +199,7 @@ export default function AuthScreen() {
         <Text style={styles.subtitle}>
           {isSignUp ? 'Create your account' : 'Welcome back'}
         </Text>
-        
+
         <View style={styles.inputContainer}>
           <TextInput
             placeholder="Email"
@@ -138,9 +218,9 @@ export default function AuthScreen() {
           />
         </View>
 
-        <TouchableOpacity 
-          style={styles.button} 
-          onPress={handleEmailAuth} 
+        <TouchableOpacity
+          style={styles.button}
+          onPress={handleEmailAuth}
           disabled={loading}
         >
           {loading ? (
@@ -152,8 +232,22 @@ export default function AuthScreen() {
           )}
         </TouchableOpacity>
 
-        <TouchableOpacity 
-          onPress={() => setIsSignUp(!isSignUp)} 
+        <View style={styles.divider}>
+          <View style={styles.dividerLine} />
+          <Text style={styles.dividerText}>OR</Text>
+          <View style={styles.dividerLine} />
+        </View>
+
+        <TouchableOpacity
+          style={styles.googleButton}
+          onPress={handleGoogleSignIn}
+          disabled={loading}
+        >
+          <Text style={styles.googleButtonText}>Continue with Google</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() => setIsSignUp(!isSignUp)}
           style={styles.switchButton}
         >
           <Text style={styles.switchText}>
@@ -180,14 +274,27 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     fontSize: 16,
   },
-  button: { 
-    backgroundColor: '#000', 
-    paddingVertical: 18, 
-    width: '100%', 
-    borderRadius: 12, 
+  button: {
+    backgroundColor: '#000',
+    paddingVertical: 18,
+    width: '100%',
+    borderRadius: 12,
     alignItems: 'center',
   },
   buttonText: { color: '#fff', fontSize: 18, fontWeight: '700' },
+  divider: { flexDirection: 'row', alignItems: 'center', width: '100%', marginVertical: 20 },
+  dividerLine: { flex: 1, height: 1, backgroundColor: '#eee' },
+  dividerText: { marginHorizontal: 10, color: '#999', fontSize: 12 },
+  googleButton: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    paddingVertical: 18,
+    width: '100%',
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  googleButtonText: { color: '#000', fontSize: 16, fontWeight: '600' },
   switchButton: { marginTop: 25 },
   switchText: { color: '#007AFF', fontSize: 14, fontWeight: '600' },
 });

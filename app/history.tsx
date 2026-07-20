@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
     ActivityIndicator,
+    Alert,
     Dimensions,
     FlatList,
     Image,
@@ -12,6 +13,7 @@ import {
     ScrollView,
     StyleSheet,
     Text,
+    TextInput,
     TouchableOpacity,
     View
 } from 'react-native';
@@ -23,10 +25,17 @@ type SortOption = 'date_desc' | 'date_asc' | 'amount_desc' | 'amount_asc';
 export default function HistoryScreen() {
     const [loading, setLoading] = useState(true);
     const [expenses, setExpenses] = useState<any[]>([]);
-    const [selectedExpense, setSelectedExpense] = useState<any | null>(null); // State for the full review popup
+    const [selectedExpense, setSelectedExpense] = useState<any | null>(null);
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
     const [sortBy, setSortBy] = useState<SortOption>('date_desc');
     const [currencySymbol, setCurrencySymbol] = useState('Rs.');
+
+    // --- NEW: Edit States ---
+    const [editModalVisible, setEditModalVisible] = useState(false);
+    const [editingExpense, setEditingExpense] = useState<any | null>(null);
+    const [editAmount, setEditAmount] = useState('');
+    const [editDescription, setEditDescription] = useState('');
+    const [isSaving, setIsSaving] = useState(false);
 
     useEffect(() => {
         const loadCurrency = async () => {
@@ -48,7 +57,7 @@ export default function HistoryScreen() {
             const accountId = await AsyncStorage.getItem('active_account_id');
             const { data, error } = await supabase
                 .from('expenses_duplicate')
-                .select(`*, accounts ( name, profiles ( email ) )`)
+                .select(`*, accounts ( name ), profiles!profile_id ( email )`)
                 .eq('account_id', accountId);
 
             if (error) throw error;
@@ -59,6 +68,48 @@ export default function HistoryScreen() {
             setLoading(false);
         }
     }
+
+    // --- NEW: Update Function ---
+    const handleUpdateExpense = async () => {
+        if (!editAmount || isNaN(parseFloat(editAmount))) {
+            Alert.alert("Error", "Please enter a valid amount.");
+            return;
+        }
+
+        try {
+            setIsSaving(true);
+            const { error } = await supabase
+                .from('expenses_duplicate')
+                .update({
+                    amount: parseFloat(editAmount),
+                    description: editDescription
+                })
+                .eq('id', editingExpense.id);
+
+            if (error) throw error;
+
+            Alert.alert("Success", "Expense updated successfully");
+            setEditModalVisible(false);
+            fetchHistory(); // Refresh the list
+        } catch (e: any) {
+            Alert.alert("Error", e.message);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const openEditModal = (item: any) => {
+        setEditingExpense(item);
+        setEditAmount(item.amount.toString());
+        setEditDescription(item.description);
+        setEditModalVisible(true);
+    };
+
+    const cleanEmailToName = (email: string) => {
+        if (!email) return 'Unknown User';
+        const namePart = email.split('@')[0];
+        return namePart.split(/[._-]/).map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+    };
 
     const processedExpenses = useMemo(() => {
         let result = [...expenses];
@@ -81,7 +132,9 @@ export default function HistoryScreen() {
         return (
             <TouchableOpacity 
                 style={styles.expenseRow} 
-                onPress={() => setSelectedExpense(item)} // Open Full Review
+                onPress={() => setSelectedExpense(item)}
+                onLongPress={() => openEditModal(item)} // --- TRIGGER EDIT ---
+                delayLongPress={500}
             >
                 <View style={styles.thumbnailContainer}>
                     {item.bill ? (
@@ -128,7 +181,41 @@ export default function HistoryScreen() {
                 />
             )}
 
-            {/* --- FULL REVIEW MODAL --- */}
+            {/* --- EDIT MODAL --- */}
+            <Modal visible={editModalVisible} animationType="fade" transparent={true}>
+                <View style={styles.editOverlay}>
+                    <View style={styles.editCard}>
+                        <Text style={styles.editTitle}>Update Expense</Text>
+                        
+                        <Text style={styles.inputLabel}>Amount ({currencySymbol})</Text>
+                        <TextInput 
+                            style={styles.editInput} 
+                            value={editAmount} 
+                            onChangeText={setEditAmount} 
+                            keyboardType="numeric"
+                        />
+
+                        <Text style={styles.inputLabel}>Description</Text>
+                        <TextInput 
+                            style={[styles.editInput, { height: 80 }]} 
+                            value={editDescription} 
+                            onChangeText={setEditDescription} 
+                            multiline
+                        />
+
+                        <View style={styles.editActions}>
+                            <TouchableOpacity style={styles.cancelBtnText} onPress={() => setEditModalVisible(false)}>
+                                <Text style={{ color: '#64748B', fontWeight: '700' }}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.saveEditBtn} onPress={handleUpdateExpense} disabled={isSaving}>
+                                {isSaving ? <ActivityIndicator color="#FFF" /> : <Text style={styles.saveBtnText}>Save Changes</Text>}
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* --- FULL REVIEW MODAL (existing) --- */}
             <Modal visible={!!selectedExpense} animationType="slide" transparent={true}>
                 <View style={styles.detailOverlay}>
                     <View style={styles.detailSheet}>
@@ -158,6 +245,7 @@ export default function HistoryScreen() {
                             <View style={styles.metaBox}>
                                 <DetailMeta icon="calendar" label="Date" value={selectedExpense ? formatDateTime(selectedExpense.date_time) : ''} />
                                 <DetailMeta icon="wallet" label="Account" value={selectedExpense?.accounts?.name} />
+                                <DetailMeta icon="person-circle-outline" label="Added By" value={selectedExpense?.profiles?.email ? cleanEmailToName(selectedExpense.profiles.email) : 'Owner'} />
                             </View>
 
                             {selectedExpense?.bill && (
@@ -171,7 +259,7 @@ export default function HistoryScreen() {
                 </View>
             </Modal>
 
-            {/* Full Image Zoom Modal */}
+            {/* --- FULL IMAGE MODAL --- */}
             <Modal visible={!!selectedImage} transparent={true} animationType="fade">
                 <View style={styles.modalOverlay}>
                     <TouchableOpacity style={styles.closeBtn} onPress={() => setSelectedImage(null)}>
@@ -183,6 +271,8 @@ export default function HistoryScreen() {
         </SafeAreaView>
     );
 }
+
+// ... SortChip and DetailMeta helper components remain the same ...
 
 const SortChip = ({ label, active, onPress, icon }: any) => (
     <TouchableOpacity style={[styles.chip, active && styles.chipActive]} onPress={onPress}>
@@ -226,9 +316,20 @@ const styles = StyleSheet.create({
     emptyContainer: { alignItems: 'center', marginTop: 100 },
     emptyText: { color: '#94A3B8', fontWeight: '600' },
 
+    // Edit Modal Styles
+    editOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center' },
+    editCard: { width: width * 0.85, backgroundColor: '#FFF', borderRadius: 24, padding: 25, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, elevation: 10 },
+    editTitle: { fontSize: 18, fontWeight: '900', color: '#0F172A', marginBottom: 20 },
+    inputLabel: { fontSize: 12, fontWeight: '700', color: '#94A3B8', textTransform: 'uppercase', marginBottom: 8 },
+    editInput: { backgroundColor: '#F8FAFC', borderRadius: 12, padding: 15, fontSize: 16, borderWidth: 1, borderColor: '#F1F5F9', marginBottom: 20, color: '#0F172A' },
+    editActions: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 20 },
+    saveEditBtn: { backgroundColor: '#0F172A', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12 },
+    saveBtnText: { color: '#FFF', fontWeight: '700' },
+    cancelBtnText: { padding: 10 },
+
     // Detail Modal Styles
     detailOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
-    detailSheet: { backgroundColor: '#FFF', height: height * 0.85, borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 30, shadowColor: "#000", shadowOffset: { width: 0, height: -10 }, shadowOpacity: 0.1, shadowRadius: 20, elevation: 20 },
+    detailSheet: { backgroundColor: '#FFF', height: height * 0.85, borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 30 },
     sheetClose: { alignSelf: 'center', marginBottom: 20 },
     detailShop: { fontSize: 14, fontWeight: '800', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 2, textAlign: 'center' },
     detailDesc: { fontSize: 24, fontWeight: '900', color: '#0F172A', textAlign: 'center', marginTop: 5 },

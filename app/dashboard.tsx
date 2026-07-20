@@ -58,24 +58,44 @@ useEffect(() => {
         }
     }, [activeAccount]);
 
-    async function fetchInitialData() {
-        try {
-            setLoading(true);
-            const { data: accountsData } = await supabase.from('accounts').select('*');
-            setAccounts(accountsData || []);
-            if (accountsData && accountsData.length > 0) {
-                const savedId = await AsyncStorage.getItem('active_account_id');
-                const savedAccount = accountsData.find(a => a.id === savedId);
-                setActiveAccount(savedAccount || accountsData[0]);
-            }
-        } catch (error) {
-            console.error(error);
-        } finally {
-            setLoading(false);
-        }
-    }
+   async function fetchInitialData() {
+    try {
+        setLoading(true);
+        const userId = await AsyncStorage.getItem('user_id');
+        
+        if (!userId) return;
 
-    // --- Create or Update Account ---
+        console.log("Fetching accounts for User ID:", userId);
+
+        // We fetch accounts where:
+        // 1. You are the creator (profile_id)
+        // 2. OR your ID is inside the members JSONB array
+        const { data: accountsData, error } = await supabase
+            .from('accounts')
+            .select('*')
+            .or(`profile_id.eq.${userId},members.cs.[{"id":"${userId}"}]`);
+
+        if (error) {
+            console.error("Supabase Fetch Error:", error.message);
+            throw error;
+        }
+
+        console.log("Total Accounts retrieved:", accountsData?.length);
+        setAccounts(accountsData || []);
+        
+        if (accountsData && accountsData.length > 0) {
+            const savedId = await AsyncStorage.getItem('active_account_id');
+            const savedAccount = accountsData.find(a => a.id === savedId);
+            // Default to the first account found if the saved one isn't in the list
+            setActiveAccount(savedAccount || accountsData[0]);
+        }
+    } catch (error: any) {
+        console.error("Dashboard Fetch Error:", error.message);
+    } finally {
+        setLoading(false);
+    }
+}
+    // --- Create or Update Account --
     async function handleSaveAccount() {
         if (!accountName.trim()) {
             Alert.alert('Error', 'Please enter an account name');

@@ -2,7 +2,7 @@
   "expo": {
     "name": "ExpenseApp",
     "slug": "ExpenseApp",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "expenseapp",
@@ -12,7 +12,14 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.chamuditha04.ExpenseApp",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLSchemes": [
+              "expenseapp"
+            ]
+          }
+        ]
       }
     },
     "android": {
@@ -24,7 +31,21 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.chamuditha04.ExpenseApp"
+      "package": "com.chamuditha04.ExpenseApp",
+      "versionCode": 2,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": {
+            "scheme": "expenseapp"
+          },
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ]
     },
     "web": {
       "output": "static",
@@ -47,17 +68,20 @@
       [
         "@react-native-google-signin/google-signin",
         {
-          "iosUrlScheme": "com.googleusercontent.apps.YOUR_IOS_CLIENT_ID_PREFIX"
+          "iosUrlScheme": "com.googleusercontent.apps.123456789012-abcd1234efgh5678ijkl"
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
     },
     "extra": {
-      "router": {},
+      "router": {
+        "origin": false
+      },
       "eas": {
         "projectId": "1b6edfb2-8f8f-4f90-aca0-db6676deea7d"
       }

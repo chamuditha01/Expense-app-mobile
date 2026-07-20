@@ -1,4 +1,5 @@
 import { supabase } from '@/components/lib/supabase';
+import { GoogleSignin, isErrorWithCode, statusCodes } from '@react-native-google-signin/google-signin';
 import React, { useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
@@ -6,7 +7,7 @@ export default function AuthScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [isSignUp, setIsSignUp] = useState(false); // Toggle between Login and Sign Up
+  const [isSignUp, setIsSignUp] = useState(false);
 
   async function handleEmailAuth() {
     if (!email || !password) {
@@ -31,10 +32,44 @@ export default function AuthScreen() {
     }
   }
 
+  async function handleGoogleSignIn() {
+    setLoading(true);
+    try {
+      await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+      const userInfo = await GoogleSignin.signIn();
+
+      const idToken = userInfo.data?.idToken;
+      if (!idToken) throw new Error('No ID token returned from Google');
+
+      const { error } = await supabase.auth.signInWithIdToken({
+        provider: 'google',
+        token: idToken,
+      });
+      if (error) throw error;
+    } catch (error: any) {
+      if (isErrorWithCode(error)) {
+        switch (error.code) {
+          case statusCodes.SIGN_IN_CANCELLED:
+            // user cancelled, no need to show an error
+            break;
+          case statusCodes.IN_PROGRESS:
+            Alert.alert('Please wait', 'Sign-in already in progress');
+            break;
+          default:
+            Alert.alert('Google Sign-In Error', error.message);
+        }
+      } else {
+        Alert.alert('Google Sign-In Error', error.message);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <View style={styles.container}>
       <Text style={styles.logo}>💰 NanoTrack</Text>
-      
+
       <View style={styles.inputContainer}>
         <TextInput
           placeholder="Email"
@@ -61,6 +96,16 @@ export default function AuthScreen() {
         )}
       </TouchableOpacity>
 
+      <View style={styles.divider}>
+        <View style={styles.dividerLine} />
+        <Text style={styles.dividerText}>OR</Text>
+        <View style={styles.dividerLine} />
+      </View>
+
+      <TouchableOpacity style={styles.googleButton} onPress={handleGoogleSignIn} disabled={loading}>
+        <Text style={styles.googleButtonText}>Continue with Google</Text>
+      </TouchableOpacity>
+
       <TouchableOpacity onPress={() => setIsSignUp(!isSignUp)} style={styles.switchButton}>
         <Text style={styles.switchText}>
           {isSignUp ? 'Already have an account? Sign In' : "Don't have an account? Sign Up"}
@@ -84,6 +129,19 @@ const styles = StyleSheet.create({
   },
   button: { backgroundColor: '#000', paddingVertical: 15, width: '100%', borderRadius: 10, alignItems: 'center' },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  divider: { flexDirection: 'row', alignItems: 'center', width: '100%', marginVertical: 20 },
+  dividerLine: { flex: 1, height: 1, backgroundColor: '#ddd' },
+  dividerText: { marginHorizontal: 10, color: '#999', fontSize: 12 },
+  googleButton: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    paddingVertical: 15,
+    width: '100%',
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  googleButtonText: { color: '#000', fontSize: 16, fontWeight: '600' },
   switchButton: { marginTop: 20 },
   switchText: { color: '#666', fontSize: 14 },
 });
