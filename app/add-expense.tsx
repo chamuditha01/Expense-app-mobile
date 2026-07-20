@@ -23,7 +23,7 @@ import {
 
 // --- CONFIGURATION ---
 const OPENAI_API_KEY =
-  "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";
+  "";
 const CLOUDINARY_URL = "https://api.cloudinary.com/v1_1/dxizf0lc5/image/upload";
 const UPLOAD_PRESET = "expense_app";
 
