@@ -72,7 +72,19 @@
         }
       ],
       "@react-native-community/datetimepicker",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "ExpenseApp needs camera access to scan your receipts."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "ExpenseApp needs access to your photos so you can attach a receipt image."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
