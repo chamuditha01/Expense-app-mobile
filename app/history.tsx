@@ -22,6 +22,11 @@ const { width, height } = Dimensions.get('window');
 
 type SortOption = 'date_desc' | 'date_asc' | 'amount_desc' | 'amount_asc';
 
+interface Account {
+    id: string;
+    name: string;
+}
+
 export default function HistoryScreen() {
     const [loading, setLoading] = useState(true);
     const [expenses, setExpenses] = useState<any[]>([]);
@@ -37,6 +42,10 @@ export default function HistoryScreen() {
     const [editDescription, setEditDescription] = useState('');
     const [isSaving, setIsSaving] = useState(false);
 
+    // --- NEW: Account Swap States ---
+    const [accounts, setAccounts] = useState<Account[]>([]);
+    const [editAccountId, setEditAccountId] = useState<string | null>(null);
+
     useEffect(() => {
         const loadCurrency = async () => {
             try {
@@ -49,7 +58,26 @@ export default function HistoryScreen() {
 
     useEffect(() => {
         fetchHistory();
+        fetchUserAccounts();
     }, []);
+
+    async function fetchUserAccounts() {
+        try {
+            const profileId = await AsyncStorage.getItem('user_id');
+            if (!profileId) return;
+
+            // Fetch accounts where User is Owner OR User is in the members JSON array
+            const { data, error } = await supabase
+                .from('accounts')
+                .select('id, name, profile_id')
+                .or(`profile_id.eq.${profileId},members.cs.[{"id":"${profileId}"}]`);
+
+            if (error) throw error;
+            setAccounts(data || []);
+        } catch (e) {
+            console.error('Error fetching accounts for swap:', e);
+        }
+    }
 
     async function fetchHistory() {
         try {
@@ -76,13 +104,19 @@ export default function HistoryScreen() {
             return;
         }
 
+        if (!editAccountId) {
+            Alert.alert("Error", "Please select an account.");
+            return;
+        }
+
         try {
             setIsSaving(true);
             const { error } = await supabase
                 .from('expenses_duplicate')
                 .update({
                     amount: parseFloat(editAmount),
-                    description: editDescription
+                    description: editDescription,
+                    account_id: editAccountId
                 })
                 .eq('id', editingExpense.id);
 
@@ -102,6 +136,7 @@ export default function HistoryScreen() {
         setEditingExpense(item);
         setEditAmount(item.amount.toString());
         setEditDescription(item.description);
+        setEditAccountId(item.account_id);
         setEditModalVisible(true);
     };
 
@@ -196,12 +231,35 @@ export default function HistoryScreen() {
                         />
 
                         <Text style={styles.inputLabel}>Description</Text>
-                        <TextInput 
-                            style={[styles.editInput, { height: 80 }]} 
-                            value={editDescription} 
-                            onChangeText={setEditDescription} 
+                        <TextInput
+                            style={[styles.editInput, { height: 80 }]}
+                            value={editDescription}
+                            onChangeText={setEditDescription}
                             multiline
                         />
+
+                        <Text style={styles.inputLabel}>Account</Text>
+                        <View style={styles.accountSwapRow}>
+                            {accounts.map((acc) => (
+                                <TouchableOpacity
+                                    key={acc.id}
+                                    style={[
+                                        styles.accSwapBtn,
+                                        editAccountId === acc.id && styles.accSwapBtnActive,
+                                    ]}
+                                    onPress={() => setEditAccountId(acc.id)}
+                                >
+                                    <Text
+                                        style={[
+                                            styles.accSwapBtnText,
+                                            editAccountId === acc.id && { color: '#FFF' },
+                                        ]}
+                                    >
+                                        {acc.name}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
 
                         <View style={styles.editActions}>
                             <TouchableOpacity style={styles.cancelBtnText} onPress={() => setEditModalVisible(false)}>
@@ -322,6 +380,10 @@ const styles = StyleSheet.create({
     editTitle: { fontSize: 18, fontWeight: '900', color: '#0F172A', marginBottom: 20 },
     inputLabel: { fontSize: 12, fontWeight: '700', color: '#94A3B8', textTransform: 'uppercase', marginBottom: 8 },
     editInput: { backgroundColor: '#F8FAFC', borderRadius: 12, padding: 15, fontSize: 16, borderWidth: 1, borderColor: '#F1F5F9', marginBottom: 20, color: '#0F172A' },
+    accountSwapRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 20 },
+    accSwapBtn: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 10, backgroundColor: '#F1F5F9' },
+    accSwapBtnActive: { backgroundColor: '#0F172A' },
+    accSwapBtnText: { fontWeight: '700', color: '#64748B', fontSize: 13 },
     editActions: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 20 },
     saveEditBtn: { backgroundColor: '#0F172A', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12 },
     saveBtnText: { color: '#FFF', fontWeight: '700' },

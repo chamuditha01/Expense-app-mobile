@@ -1,6 +1,8 @@
 import { supabase } from '@/components/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { EncodingType, readAsStringAsync } from 'expo-file-system/legacy';
+import * as Print from 'expo-print';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
@@ -34,6 +36,7 @@ export default function SettingsScreen() {
     // New states for adding members
     const [inviteEmail, setInviteEmail] = useState<string>('');
     const [isProcessing, setIsProcessing] = useState<string | null>(null);
+    const [closingAccountId, setClosingAccountId] = useState<string | null>(null);
 
     const isValidEmail = (email: string) => {
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -167,20 +170,165 @@ export default function SettingsScreen() {
         }
     };
 
+    const buildClosureReportHtml = (accountName: string, expenses: any[]) => {
+        const total = expenses.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+        const rows = expenses.map((e) => `
+            <tr>
+                <td>${new Date(e.date_time).toLocaleDateString()}</td>
+                <td>${e.shop_name || '-'}</td>
+                <td>${e.description || '-'}</td>
+                <td class="amount">${Number(e.amount).toFixed(2)}</td>
+            </tr>
+        `).join('');
+
+        return `
+            <html>
+                <head>
+                    <meta charset="utf-8" />
+                    <style>
+                        body { font-family: -apple-system, Helvetica, Arial, sans-serif; color: #0F172A; padding: 24px; }
+                        h1 { font-size: 22px; margin-bottom: 4px; }
+                        .meta { color: #64748B; font-size: 12px; margin-bottom: 20px; }
+                        .summary { display: flex; gap: 24px; margin-bottom: 24px; }
+                        .summary div { background: #F8FAFC; border-radius: 12px; padding: 12px 16px; }
+                        .summary .label { font-size: 10px; text-transform: uppercase; color: #94A3B8; font-weight: 700; }
+                        .summary .value { font-size: 18px; font-weight: 900; margin-top: 4px; }
+                        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+                        th { text-align: left; font-size: 11px; text-transform: uppercase; color: #94A3B8; border-bottom: 2px solid #E2E8F0; padding: 8px 6px; }
+                        td { font-size: 12px; padding: 8px 6px; border-bottom: 1px solid #F1F5F9; }
+                        td.amount { text-align: right; font-weight: 700; }
+                    </style>
+                </head>
+                <body>
+                    <h1>Account Closure Summary</h1>
+                    <div class="meta">${accountName} &middot; Closed on ${new Date().toLocaleString()}</div>
+                    <div class="summary">
+                        <div><div class="label">Total Spent</div><div class="value">${total.toFixed(2)}</div></div>
+                        <div><div class="label">Transactions</div><div class="value">${expenses.length}</div></div>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr><th>Date</th><th>Merchant</th><th>Description</th><th>Amount</th></tr>
+                        </thead>
+                        <tbody>
+                            ${rows || '<tr><td colspan="4">No expenses recorded for this account.</td></tr>'}
+                        </tbody>
+                    </table>
+                </body>
+            </html>
+        `;
+    };
+
+    const sendClosureReportEmail = async (accountId: string, accountName: string) => {
+        // 1. Pull every expense recorded against this account
+        const { data: expenses, error: expensesError } = await supabase
+            .from('expenses_duplicate')
+            .select('shop_name, description, amount, date_time')
+            .eq('account_id', accountId);
+
+        if (expensesError) throw expensesError;
+
+        // 2. Render the summary as a PDF
+        const html = buildClosureReportHtml(accountName, expenses || []);
+        const { uri } = await Print.printToFileAsync({ html, base64: false });
+        const base64Pdf = await readAsStringAsync(uri, { encoding: EncodingType.Base64 });
+
+        // 3. Email it via the Supabase Edge Function (Resend), which attaches the PDF
+        const { data, error } = await supabase.functions.invoke('send-closure-report', {
+            body: {
+                accountName,
+                closedDate: new Date().toLocaleString(),
+                pdfBase64: base64Pdf,
+                filename: `${accountName.replace(/\s+/g, '_')}_closure_report.pdf`,
+            },
+        });
+
+        if (error) {
+            // supabase-js only puts a generic message on `error`; the real
+            // reason the function returned is in the response body.
+            let detail = error.message;
+            try {
+                const body = await error.context?.json();
+                if (body) detail = JSON.stringify(body);
+            } catch {
+                try {
+                    const text = await error.context?.text();
+                    if (text) detail = text;
+                } catch {
+                    // fall back to error.message
+                }
+            }
+            throw new Error(detail);
+        }
+        if (data?.error) throw new Error(JSON.stringify(data.error));
+    };
+
+    const removeAccountAndExpenses = async (accountId: string) => {
+        // Expenses reference the account via a foreign key, so they must be
+        // cleared first or the account delete fails with a constraint error.
+        const { error: expensesDeleteError } = await supabase
+            .from('expenses_duplicate')
+            .delete()
+            .eq('account_id', accountId);
+
+        if (expensesDeleteError) throw expensesDeleteError;
+
+        const { error: accountDeleteError } = await supabase
+            .from('accounts')
+            .delete()
+            .eq('id', accountId);
+
+        if (accountDeleteError) throw accountDeleteError;
+
+        setAccounts(prev => prev.filter(a => a.id !== accountId));
+    };
+
     const deleteAccount = async (accountId: string, accountName: string) => {
         Alert.alert(
             "Delete Account",
-            `Are you sure you want to delete "${accountName}"?`,
+            `Are you sure you want to delete "${accountName}"? A summary report will be emailed before it's removed.`,
             [
                 { text: "Cancel", style: "cancel" },
-                { 
-                    text: "Delete", 
-                    style: "destructive", 
+                {
+                    text: "Delete",
+                    style: "destructive",
                     onPress: async () => {
-                        const { error } = await supabase.from('accounts').delete().eq('id', accountId);
-                        if (!error) {
-                            setAccounts(accounts.filter(a => a.id !== accountId));
+                        setClosingAccountId(accountId);
+                        try {
+                            await sendClosureReportEmail(accountId, accountName);
+                        } catch (e: any) {
+                            const detail = e.message || String(e);
+                            console.error('Closure report email failed:', detail);
+                            Alert.alert(
+                                "Report Not Sent",
+                                `We couldn't email the closure summary (${detail}). You can still delete the account. Delete anyway?`,
+                                [
+                                    { text: "Cancel", style: "cancel", onPress: () => setClosingAccountId(null) },
+                                    {
+                                        text: "Delete Anyway",
+                                        style: "destructive",
+                                        onPress: async () => {
+                                            try {
+                                                await removeAccountAndExpenses(accountId);
+                                            } catch (delErr: any) {
+                                                console.error('Account delete failed:', delErr.message);
+                                                Alert.alert("Error", `Could not delete account: ${delErr.message}`);
+                                            }
+                                            setClosingAccountId(null);
+                                        }
+                                    }
+                                ]
+                            );
+                            return;
                         }
+
+                        try {
+                            await removeAccountAndExpenses(accountId);
+                        } catch (delErr: any) {
+                            console.error('Account delete failed:', delErr.message);
+                            Alert.alert("Error", `Report was emailed, but the account could not be deleted: ${delErr.message}`);
+                        }
+                        setClosingAccountId(null);
                     }
                 }
             ]
@@ -262,11 +410,16 @@ export default function SettingsScreen() {
                                         )}
                                     </View>
                                 </View>
-                                <TouchableOpacity 
+                                <TouchableOpacity
                                     onPress={() => deleteAccount(acc.id, acc.name)}
                                     style={styles.trashBtn}
+                                    disabled={closingAccountId === acc.id}
                                 >
-                                    <Ionicons name="trash-outline" size={20} color="#EF4444" />
+                                    {closingAccountId === acc.id ? (
+                                        <ActivityIndicator size="small" color="#EF4444" />
+                                    ) : (
+                                        <Ionicons name="trash-outline" size={20} color="#EF4444" />
+                                    )}
                                 </TouchableOpacity>
                             </View>
 
